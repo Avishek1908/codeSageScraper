@@ -76,10 +76,10 @@ export class RobustProblemScraper extends BaseScraper {
           if (problem) {
             problems.push(problem);
             
-            // Now scrape the Editorial solution
-            this.logger.info(`💡 Scraping Editorial for: ${problemData.title}`);
+            // Now scrape the Complete Editorial with enhanced comments
+            this.logger.info(`💡 Scraping Complete Editorial for: ${problemData.title}`);
             const editorial = await this.retry(() => 
-              this.scrapeEditorialSolution(problemData), 2
+              this.scrapeCompleteEditorial(problemData), 2
             );
             
             if (editorial) {
@@ -565,7 +565,6 @@ export class RobustProblemScraper extends BaseScraper {
                  !code.includes('MIT License') &&
                  !code.includes('jQuery') &&
                  !code.includes('document.') &&
-                 !code.includes('window.') &&
                  !code.includes('localStorage') &&
                  !code.includes('addEventListener') &&
                  !code.includes('createElement') &&
@@ -1044,4 +1043,302 @@ export class RobustProblemScraper extends BaseScraper {
       isEditorial: true
     };
   }
+
+  /**
+   * Enhanced comment extraction with code block detection
+   * Based on proven logic from twoSumEditorialTest.ts
+   */
+  private async extractEnhancedComments(): Promise<any> {
+    if (!this.page) throw new Error('Page not initialized');
+
+    // Scroll to the bottom to find the comments section
+    await this.page.evaluate(() => {
+      window.scrollTo(0, document.body.scrollHeight);
+    });
+    await this.delay(3000);
+
+    // Enhanced comment extraction with code block detection
+    const commentsData = await this.page.evaluate(async () => {
+      const results = {
+        foundCommentsSection: false,
+        extractedComments: [] as string[],
+        debugInfo: {
+          commentsHeaderText: '',
+          actualElementsFound: [] as string[]
+        }
+      };
+
+      // Look for the comments section with multiple approaches
+      const allTextElements = document.querySelectorAll('h1, h2, h3, h4, h5, h6, div, span, p, section, article');
+      
+      for (let i = 0; i < allTextElements.length; i++) {
+        const element = allTextElements[i];
+        const textContent = element.textContent?.trim() || '';
+        
+        // Look for "Comments (" pattern but exclude CSS/JS content
+        if (textContent.includes('Comments (') && 
+            !textContent.includes('function()') && 
+            !textContent.includes('.ͼ') && 
+            !textContent.includes('css') &&
+            !textContent.includes('margin') &&
+            textContent.length < 200) {
+          
+          results.foundCommentsSection = true;
+          results.debugInfo.commentsHeaderText = textContent;
+          
+          // Found comments section, now look for individual comments
+          const parentContainer = element.closest('div, section, article');
+          if (parentContainer) {
+            // Wait for content to load
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            const commentsContainer = parentContainer.parentElement || parentContainer;
+            
+            // Target comment containers with enhanced detection
+            const potentialComments = commentsContainer.querySelectorAll('div[class*="border"], div[class*="pt-4"], div[class*="transition"]');
+            
+            for (let j = 0; j < potentialComments.length && results.extractedComments.length < 5; j++) {
+              const commentEl = potentialComments[j];
+              let commentText = commentEl.textContent?.trim() || '';
+              
+              // Enhanced comment validation
+              if (commentText.length > 50 && commentText.length < 2000 && 
+                  !commentText.includes('function()') && 
+                  !commentText.includes('.ͼ') && 
+                  !commentText.includes('getElementById') && 
+                  !commentText.includes('localStorage') && 
+                  !commentText.includes('querySelector') && 
+                  !commentText.includes('addEventListener')) {
+                
+                // Look for complete comment patterns
+                const hasReplyPattern = commentText.includes('Reply');
+                const hasVotePattern = commentText.match(/\d+[KM]?\s*(Show|Replies)/i);
+                const hasDatePattern = commentText.match(/\w+\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d{1,2},?\s*\d{4})/i);
+                
+                if (hasReplyPattern || hasVotePattern || hasDatePattern) {
+                  // Extract code blocks from the comment
+                  const codeBlocks: string[] = [];
+                  const codeElements = commentEl.querySelectorAll('pre, code, [class*="code"], .language-');
+                  
+                  for (let k = 0; k < codeElements.length; k++) {
+                    const codeEl = codeElements[k];
+                    const codeText = codeEl.textContent?.trim() || '';
+                    
+                    if (codeText.length > 10 && 
+                        (codeText.includes('def ') || codeText.includes('class ') || 
+                         codeText.includes('function') || codeText.includes('public ') || 
+                         codeText.includes('int') || codeText.includes('return') ||
+                         codeText.includes('{') || codeText.includes('}') ||
+                         codeText.includes('//') || codeText.includes('#'))) {
+                      
+                      // Detect programming language
+                      let language = 'unknown';
+                      if (codeText.includes('def ') || codeText.includes('import ') || codeText.includes('print(')) language = 'python';
+                      else if (codeText.includes('class Solution') && codeText.includes('public ')) language = 'java';
+                      else if (codeText.includes('function') || codeText.includes('const ') || codeText.includes('let ')) language = 'javascript';
+                      else if (codeText.includes('vector<') || codeText.includes('#include')) language = 'cpp';
+                      
+                      codeBlocks.push(`[${language}] ${codeText}`);
+                    }
+                  }
+                  
+                  // Create enhanced comment structure
+                  let enhancedComment = commentText;
+                  if (codeBlocks.length > 0) {
+                    enhancedComment += `\n\n[CODE_BLOCKS_FOUND: ${codeBlocks.length}]\n` + codeBlocks.join('\n\n---\n\n');
+                  }
+                  
+                  // Duplicate prevention with enhanced logic
+                  const isNewComment = !results.extractedComments.some(existing => {
+                    const existingStart = existing.substring(0, 30);
+                    const currentStart = commentText.substring(0, 30);
+                    return existingStart === currentStart;
+                  });
+                  
+                  if (isNewComment) {
+                    results.extractedComments.push(enhancedComment);
+                    results.debugInfo.actualElementsFound.push(`Element: ${commentEl.tagName}, Class: ${commentEl.className.substring(0, 50)}..., Text: ${commentText.substring(0, 100)}..., Code Blocks: ${codeBlocks.length}`);
+                  }
+                }
+              }
+            }
+            break; // Found the comments section, stop looking
+          }
+        }
+      }
+
+      return results;
+    });
+
+    return commentsData;
+  }
+
+  /**
+   * Enhanced editorial scraping with complete structure including comments
+   * Returns the complete editorial data structure similar to complete_two_sum_editorial.json
+   */
+  private async scrapeCompleteEditorial(problemData: any): Promise<any | null> {
+    if (!this.page) throw new Error('Page not initialized');
+
+    try {
+      const editorialUrl = `${this.LEETCODE_BASE_URL}/problems/${problemData.slug}/editorial/`;
+      this.logger.info(`📚 Navigating to Editorial: ${editorialUrl}`);
+      
+      await this.page.goto(editorialUrl, { 
+        waitUntil: 'domcontentloaded',
+        timeout: 30000 
+      });
+      
+      await this.delay(5000);
+
+      // Extract editorial data using the same approach as the original method
+      const editorialData = await this.page.evaluate(() => {
+        let editorialText = '';
+        let codeBlocks: string[] = [];
+        let approach = '';
+        let complexity = { time: '', space: '' };
+        
+        // Look for iframes (actual code implementations)
+        const iframes = document.querySelectorAll('iframe');
+        for (let i = 0; i < iframes.length; i++) {
+          try {
+            const iframe = iframes[i] as HTMLIFrameElement;
+            if (iframe.contentDocument || iframe.contentWindow) {
+              const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+              if (iframeDoc) {
+                const iframeContent = iframeDoc.body?.textContent?.trim();
+                if (iframeContent && iframeContent.length > 50 && iframeContent.length < 10000) {
+                  if ((iframeContent.includes('class Solution') || iframeContent.includes('def ') ||
+                      iframeContent.includes('function') || iframeContent.includes('public int') ||
+                      iframeContent.includes('vector<int>') || iframeContent.includes('int[]') ||
+                      iframeContent.includes('return {')) &&
+                      !iframeContent.includes('jQuery') && !iframeContent.includes('$(') &&
+                      !iframeContent.includes('document.') && !iframeContent.includes('window.') &&
+                      !iframeContent.includes('localStorage') && !iframeContent.includes('css')) {
+                    codeBlocks.push(iframeContent);
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            // Cross-origin iframe, can't access content
+          }
+        }
+
+        // Extract editorial text and approach information
+        const textElements = document.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6');
+        for (let i = 0; i < textElements.length; i++) {
+          const element = textElements[i];
+          const text = element.textContent?.trim() || '';
+          
+          if (text.length > 20 && text.length < 1000) {
+            if (text.toLowerCase().includes('approach') && text.length < 200) {
+              approach = text;
+            }
+            if (text.toLowerCase().includes('time complexity') || text.toLowerCase().includes('space complexity')) {
+              if (text.includes('O(')) {
+                const timeMatch = text.match(/time[^:]*:\s*O\([^)]+\)/i);
+                const spaceMatch = text.match(/space[^:]*:\s*O\([^)]+\)/i);
+                if (timeMatch) complexity.time = timeMatch[0];
+                if (spaceMatch) complexity.space = spaceMatch[0];
+              }
+            }
+            editorialText += text + ' ';
+          }
+        }
+
+        return {
+          editorialText: editorialText.trim(),
+          codeBlocks,
+          approach,
+          complexity,
+          language: codeBlocks.length > 0 ? 'Multiple' : 'Unknown'
+        };
+      });
+
+      // Extract enhanced comments using our proven method
+      this.logger.info('🔍 Extracting enhanced comments...');
+      const commentsData = await this.extractEnhancedComments();
+
+      // Process and structure the comments like enhanced_comments_structure.json
+      const processedComments: any = {};
+      if (commentsData.extractedComments.length > 0) {
+        commentsData.extractedComments.forEach((comment: string, index: number) => {
+          const commentKey = `comment${index + 1}`;
+          
+          // Check if comment has code blocks
+          if (comment.includes('[CODE_BLOCKS_FOUND:')) {
+            const parts = comment.split('[CODE_BLOCKS_FOUND:');
+            const commentText = parts[0].trim();
+            const codeSection = parts[1];
+            
+            processedComments[commentKey] = commentText;
+            
+            // Extract and structure code blocks
+            if (codeSection) {
+              const codeBlocks = codeSection.split('---').map(block => block.trim()).filter(block => block.length > 0);
+              codeBlocks.forEach((codeBlock, codeIndex) => {
+                const codeKey = `code${index + 1}_${codeIndex + 1}`;
+                processedComments[codeKey] = codeBlock;
+              });
+            }
+          } else {
+            processedComments[commentKey] = comment;
+          }
+        });
+      }
+
+      // Clean and filter code blocks
+      const cleanCodeBlocks = editorialData.codeBlocks.filter(code => {
+        return !code.includes('Copyright') && 
+               !code.includes('Licensed under') &&
+               !code.includes('animation-timing-function') &&
+               !code.includes('JQuery') &&
+               !code.includes('document.') &&
+               !code.includes('css') &&
+               code.length > 30 &&
+               code.length < 5000 &&
+               (code.includes('class Solution') || code.includes('def ') || 
+                code.includes('function') || code.includes('public') ||
+                code.includes('return') || code.includes('vector') ||
+                code.includes('int[]') || code.includes('[]'));
+      });
+
+      // Always return a solution object (even if no code blocks), but include enhanced comments
+      const completeEditorial = {
+        problemId: problemData.slug,
+        title: `Complete Editorial: ${problemData.title}`,
+        content: cleanCodeBlocks.length > 0 ? 
+          cleanCodeBlocks.join('\n\n--- Alternative Implementation ---\n\n') : 
+          editorialData.editorialText || 'Editorial content available',
+        language: editorialData.language,
+        runtime: 'Optimal',
+        memory: 'Optimal',
+        author: 'LeetCode Editorial',
+        votes: 1000,
+        approach: editorialData.approach,
+        complexity: editorialData.complexity,
+        explanation: editorialData.editorialText,
+        url: editorialUrl,
+        scraped_at: new Date(),
+        isEditorial: true,
+        // Enhanced structure with comments
+        topComments: processedComments,
+        summary: {
+          totalImplementations: cleanCodeBlocks.length,
+          totalComments: commentsData.extractedComments.length,
+          hasEnhancedComments: Object.keys(processedComments).length > 0
+        }
+      };
+      
+      this.logger.success(`✅ Complete Editorial for ${problemData.title}: ${cleanCodeBlocks.length} implementations, ${commentsData.extractedComments.length} comments`);
+      return completeEditorial;
+      
+    } catch (error) {
+      this.logger.warn(`⚠️ Failed to scrape complete editorial for ${problemData.slug}:`, error);
+      return this.createFallbackEditorial(problemData);
+    }
+  }
+
+  // ...existing code...
 }

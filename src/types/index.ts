@@ -76,3 +76,51 @@ export interface ExportOptions {
   fileName?: string;
   includeMetadata: boolean;
 }
+
+// Editorial-specific types for structured scraping
+export interface LeetCodeEditorialSolution {
+  problemId: string;
+  title: string;
+  extractedAt: string;
+  sourceUrl: string;
+  videoSolution: VideoSolution;
+  approaches: EditorialApproach[];
+  iframeImplementations: IframeImplementation[];
+  topComments: TopComments;
+  summary: EditorialSummary;
+  debugInfo: any;
+}
+
+export interface VideoSolution {
+  found: boolean;
+  description: string;
+  iframeUrl: string;
+}
+
+export interface EditorialApproach {
+  title: string;
+  algorithm: string;
+  implementation: string;
+  complexityAnalysis: string;
+  codeBlocks: string[];
+  iframeUrl: string;
+  fullContent: string;
+}
+
+export interface IframeImplementation {
+  src: string;
+  id: string;
+  content: string;
+}
+
+export interface TopComments {
+  [key: string]: string; // comment1, comment2, etc.
+}
+
+export interface EditorialSummary {
+  totalApproaches: number;
+  totalImplementations: number;
+  hasVideoSolution: boolean;
+  contentLength: number;
+  totalComments: number;
+}
